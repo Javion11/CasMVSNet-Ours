@@ -95,11 +95,11 @@ class CascadeMVSNet(nn.Module):
             }
         }
 
-        self.feature = FeatureNet_Cascade_New(base_channels=8, stride=4, num_stage=self.num_stage, arch_mode=self.arch_mode)
+        self.feature = FeatureNet(base_channels=8, stride=4, num_stage=self.num_stage, arch_mode=self.arch_mode)
         if self.share_cr:
-            self.cost_regularization = CostRegNet_NewUnet(in_channels=self.feature.out_channels, base_channels=8)
+            self.cost_regularization = CostRegNet(in_channels=self.feature.out_channels, base_channels=8)
         else:
-            self.cost_regularization = nn.ModuleList([CostRegNet_NewUnet(in_channels=self.feature.out_channels[i],
+            self.cost_regularization = nn.ModuleList([CostRegNet(in_channels=self.feature.out_channels[i],
                                                                  base_channels=self.cr_base_chs[i])
                                                       for i in range(self.num_stage)])
         if self.refine:

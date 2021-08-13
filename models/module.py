@@ -451,149 +451,6 @@ class FeatureNet(nn.Module):
 
         return outputs
 
-
-class ConvReLU_Double(nn.Module):
-    def __init__(self, in_channels, out_channels, stride):
-        super(ConvReLU_Double, self).__init__()
-        self.in_channels = in_channels
-        self.out_channels = out_channels
-        self.stride = stride
-        self.block = nn.Sequential(nn.Conv2d(self.in_channels, self.out_channels, kernel_size=3, stride=self.stride, padding=1),
-                                    nn.ReLU(),
-                                    nn.Conv2d(self.out_channels, self.out_channels, kernel_size=3, padding=1),
-                                    nn.ReLU())
-        self.conv_1x1 = nn.Conv2d(self.in_channels, self.out_channels, kernel_size=1, stride=self.stride)
-
-    def forward(self, x):
-        x1 = self.block(x)
-        x2 = self.conv_1x1(x)
-        x = x1 + x2
-        return x
-
-
-class Upblock_2D(nn.Module):
-    def __init__(self, in_channels):
-        super(Upblock_2D, self).__init__()
-        self.in_channels = in_channels
-        self.block = nn.Sequential(nn.Conv2d(self.in_channels, self.in_channels, kernel_size=3, stride=1, padding=1),
-                                nn.ReLU(inplace=True),
-                                nn.Conv2d(self.in_channels, self.in_channels, kernel_size=1, stride=1),
-                                )
-        self.conv_1x1 = nn.Conv2d(self.in_channels, self.in_channels, kernel_size=1, stride=1)
-    
-    def forward(self, x):
-        x_1x1 = self.conv_1x1(x)
-        x = self.block(x)
-        x = x + x_1x1
-        return x
-
-
-class FeatureNet_Cascade_New(nn.Module):
-    def __init__(self, base_channels, num_stage=3, stride=4, arch_mode="unet"):
-        super(FeatureNet_Cascade_New, self).__init__()
-        assert arch_mode in ["unet", "fpn"], print("mode must be in 'unet' or 'fpn', but get:{}".format(arch_mode))
-        print("*************feature extraction arch mode:{}****************".format(arch_mode))
-        self.arch_mode = arch_mode
-        self.stride = stride
-        self.base_channels = base_channels
-        self.num_stage = num_stage
-
-        self.block1 = ConvReLU_Double(3, base_channels, 1)
-        self.block2 = ConvReLU_Double(base_channels, 2 * base_channels, 2)
-        self.block3 = ConvReLU_Double(2 * base_channels, 4 * base_channels, 2)
-
-        self.out1 = nn.Conv2d(base_channels * 4, base_channels * 4, kernel_size=3, padding=1)
-        self.out_channels = [4 * base_channels]
-
-        if self.arch_mode == 'unet':
-            if num_stage == 3:
-                self.deconv1 = nn.ConvTranspose2d(4 * base_channels, 2 * base_channels, kernel_size=3,
-                                                 stride=2, padding=1, output_padding=1)
-                self.deconv2 = nn.ConvTranspose2d(2 * base_channels, base_channels, kernel_size=3,
-                                                 stride=2, padding=1, output_padding=1)
-                self.upblock1 = Upblock_2D(2 * base_channels)
-                self.upblock2 = Upblock_2D(base_channels)
-
-                self.out2 = nn.Conv2d(base_channels * 2, base_channels * 2, kernel_size=3, padding=1)
-                self.out3 = nn.Conv2d(base_channels, base_channels, kernel_size=3, padding=1)
-                self.out_channels.append(2 * base_channels)
-                self.out_channels.append(base_channels)
-
-            elif num_stage == 2:
-                self.deconv1 = nn.ConvTranspose2d(4 * base_channels, 2 * base_channels, kernel_size=3,
-                                                 stride=2, padding=1, output_padding=1)
-                self.upblock1 = Upblock_2D(2 * base_channels)
-
-                self.out2 = nn.Conv2d(base_channels * 2, base_channels * 2, kernel_size=3, padding=1)
-                self.out_channels.append(2 * base_channels)
-        elif self.arch_mode == "fpn":
-            final_chs = base_channels * 4
-            if num_stage == 3:
-                self.inner1 = nn.Conv2d(base_channels * 2, final_chs, 1, bias=True)
-                self.inner2 = nn.Conv2d(base_channels * 1, final_chs, 1, bias=True)
-
-                self.out2 = nn.Conv2d(final_chs, base_channels * 2, 3, padding=1)
-                self.out3 = nn.Conv2d(final_chs, base_channels, 3, padding=1)
-                self.out_channels.append(base_channels * 2)
-                self.out_channels.append(base_channels)
-
-            elif num_stage == 2:
-                self.inner1 = nn.Conv2d(base_channels * 2, final_chs, 1)
-
-                self.out2 = nn.Conv2d(final_chs, base_channels, 3, padding=1)
-                self.out_channels.append(base_channels)
-
-    def forward(self, x):
-        conv0 = self.block1(x)
-        conv1 = self.block2(conv0)
-        conv2 = self.block3(conv1)
-
-        intra_feat = conv2 # N * 4*base_channels * H/4 * W/4
-        outputs = {}
-        out = self.out1(intra_feat)
-        outputs["stage1"] = out
-        if self.arch_mode == "unet":
-            if self.num_stage == 3:
-                intra_feat = self.deconv1(intra_feat)
-                intra_feat = intra_feat + conv1
-                intra_feat = F.relu(intra_feat, inplace=True)
-                intra_feat = self.upblock1(intra_feat)
-                out = self.out2(intra_feat)
-                outputs["stage2"] = out
-
-                intra_feat = self.deconv2(intra_feat)
-                intra_feat = intra_feat + conv0
-                intra_feat = F.relu(intra_feat, inplace=True)
-                intra_feat = self.upblock2(intra_feat)
-                out = self.out3(intra_feat)
-                outputs["stage3"] = out
-
-            elif self.num_stage == 2:
-                intra_feat = self.deconv1(intra_feat)
-                intra_feat = intra_feat + conv1
-                intra_feat = F.relu(intra_feat, inplace=True)
-                intra_feat = self.upblock1(intra_feat)
-                out = self.out2(intra_feat)
-                outputs["stage2"] = out
-
-        elif self.arch_mode == "fpn":
-            if self.num_stage == 3:
-                intra_feat = F.interpolate(intra_feat, scale_factor=2, mode="bicubic") + self.inner1(conv1)
-                out = self.out2(intra_feat)
-                outputs["stage2"] = out
-
-                intra_feat = F.interpolate(intra_feat, scale_factor=2, mode="bicubic") + self.inner2(conv0)
-                out = self.out3(intra_feat)
-                outputs["stage3"] = out
-
-            elif self.num_stage == 2:
-                intra_feat = F.interpolate(intra_feat, scale_factor=2, mode="bicubic") + self.inner1(conv1)
-                out = self.out2(intra_feat)
-                outputs["stage2"] = out
-
-        return outputs
-
-
 class CostRegNet(nn.Module):
     def __init__(self, in_channels, base_channels):
         super(CostRegNet, self).__init__()
@@ -626,99 +483,6 @@ class CostRegNet(nn.Module):
         x = conv0 + self.conv11(x)
         x = self.prob(x)
         return x
-
-
-class Downblock(nn.Module):
-    def __init__(self, in_channels, out_channels, stride):
-        super(Downblock, self).__init__()
-        self.in_channels = in_channels
-        self.out_channels = out_channels
-        self.stride = stride
-        self.block = nn.Sequential(nn.Conv3d(self.in_channels, self.out_channels, kernel_size=3, stride=self.stride, padding=1),
-                                nn.ReLU(inplace=True),
-                                nn.Conv3d(self.out_channels, self.out_channels, kernel_size=3, stride=1, padding=1),
-                                nn.ReLU(inplace=True),
-                                nn.Conv3d(self.out_channels, self.out_channels, kernel_size=1, stride=1),
-                                )
-        self.conv_1x1 = nn.Conv3d(self.in_channels, self.out_channels, kernel_size=1, stride=self.stride)
-    
-    def forward(self, x):
-        x_1x1 = self.conv_1x1(x)
-        x = self.block(x)
-        x = x + x_1x1
-        x = F.relu(x, inplace=True)
-        return x
-
-class Upblock(nn.Module):
-    def __init__(self, in_channels):
-        super(Upblock, self).__init__()
-        self.in_channels = in_channels
-        self.block = nn.Sequential(nn.Conv3d(self.in_channels, self.in_channels, kernel_size=3, stride=1, padding=1),
-                                nn.ReLU(inplace=True),
-                                nn.Conv3d(self.in_channels, self.in_channels, kernel_size=1, stride=1),
-                                )
-        self.conv_1x1 = nn.Conv3d(self.in_channels, self.in_channels, kernel_size=1, stride=1)
-    
-    def forward(self, x):
-        x_1x1 = self.conv_1x1(x)
-        x = self.block(x)
-        x = x + x_1x1
-        return x
-
-
-class CostRegNet_NewUnet(nn.Module):
-    def __init__(self, in_channels, base_channels):
-        super(CostRegNet_NewUnet, self).__init__()
-        self.downblock1 = Downblock(in_channels, base_channels, 1)
-        self.downblock2 = Downblock(base_channels, base_channels * 2, 2)
-        self.downblock3 = Downblock(base_channels * 2, base_channels * 4, 2)
-        self.downblock4 = Downblock(base_channels * 4, base_channels * 8, 2)
-
-        self.deconv1 = nn.ConvTranspose3d(base_channels * 8, base_channels * 4, kernel_size=3, stride=2, padding=1, output_padding=1)
-        self.deconv2 = nn.ConvTranspose3d(base_channels * 4, base_channels * 2, kernel_size=3, stride=2, padding=1, output_padding=1)
-        self.deconv3 = nn.ConvTranspose3d(base_channels * 2, base_channels, kernel_size=3, stride=2, padding=1, output_padding=1)
-
-        self.upblock1 = Upblock(base_channels * 4)
-        self.upblock2 = Upblock(base_channels * 2)
-        self.upblock3 = Upblock(base_channels)
-        self.prob_depth = nn.Conv3d(in_channels=base_channels, out_channels=1, kernel_size=3, stride=1, padding=1)
-
-        # self.rgb_deconv1 = nn.ConvTranspose3d(8, 4, kernel_size=3, stride=2, padding=1, output_padding=1)
-        # self.rgb_deconv2 = nn.ConvTranspose3d(4, 3, kernel_size=3, stride=2, padding=1, output_padding=1)
-        # self.rgb_upblock1 = Upblock(4)
-        # self.rgb_upblock2 = Upblock(3)
-        # self.prob_rgb = nn.Conv3d(in_channels=8, out_channels=3, kernel_size=3, stride=1, padding=1)
-
-    def forward(self, x):
-        conv0 = self.downblock1(x)
-        conv1 = self.downblock2(conv0)
-        conv2 = self.downblock3(conv1)
-        conv3 = self.downblock4(conv2)
-
-        x = self.deconv1(conv3)
-        x = x + conv2
-        x = F.relu(x, inplace=True)
-        x = self.upblock1(x)
-        x = self.deconv2(x)
-        x = x + conv1
-        x = F.relu(x, inplace=True)
-        x = self.upblock2(x)
-        x = self.deconv3(x)
-        x = x + conv0
-        x = F.relu(x, inplace=True)
-        x = self.upblock3(x)
-        x = F.relu(x, inplace=True)
-        prob_depth = self.prob_depth(x)
-
-        # x = self.rgb_deconv1(x)
-        # x = F.relu(x, inplace=True)
-        # x = self.rgb_upblock1(x)
-        # x = self.rgb_deconv2(x)
-        # x = F.relu(x, inplace=True)
-        # x = self.rgb_upblock2(x)
-        # prob_rgb  = self.prob_rgb(x)
-        return prob_depth
-
 
 class RefineNet(nn.Module):
     def __init__(self):
@@ -805,3 +569,63 @@ def get_depth_range_samples(cur_depth, ndepth, depth_inteval_pixel, device, dtyp
         depth_range_samples = get_cur_depth_range_samples(cur_depth, ndepth, depth_inteval_pixel, shape, max_depth, min_depth)
 
     return depth_range_samples
+
+
+
+if __name__ == "__main__":
+    # some testing code, just IGNORE it
+    import sys
+    sys.path.append("../")
+    from datasets import find_dataset_def
+    from torch.utils.data import DataLoader
+    import numpy as np
+    import cv2
+    import matplotlib as mpl
+    mpl.use('Agg')
+    import matplotlib.pyplot as plt
+
+    # MVSDataset = find_dataset_def("colmap")
+    # dataset = MVSDataset("../data/results/ford/num10_1/", 3, 'test',
+    #                      128, interval_scale=1.06, max_h=1250, max_w=1024)
+
+    MVSDataset = find_dataset_def("dtu_yao")
+    num_depth = 48
+    dataset = MVSDataset("../data/DTU/mvs_training/dtu/", '../lists/dtu/train.txt', 'train',
+                         3, num_depth, interval_scale=1.06 * 192 / num_depth)
+
+    dataloader = DataLoader(dataset, batch_size=1)
+    item = next(iter(dataloader))
+
+    imgs = item["imgs"][:, :, :, ::4, ::4]  #(B, N, 3, H, W)
+    # imgs = item["imgs"][:, :, :, :, :]
+    proj_matrices = item["proj_matrices"]   #(B, N, 2, 4, 4) dim=N: N view; dim=2: index 0 for extr, 1 for intric
+    proj_matrices[:, :, 1, :2, :] = proj_matrices[:, :, 1, :2, :]
+    # proj_matrices[:, :, 1, :2, :] = proj_matrices[:, :, 1, :2, :] * 4
+    depth_values = item["depth_values"]     #(B, D)
+
+    imgs = torch.unbind(imgs, 1)
+    proj_matrices = torch.unbind(proj_matrices, 1)
+    ref_img, src_imgs = imgs[0], imgs[1:]
+    ref_proj, src_proj = proj_matrices[0], proj_matrices[1:][0]  #only vis first view
+
+    src_proj_new = src_proj[:, 0].clone()
+    src_proj_new[:, :3, :4] = torch.matmul(src_proj[:, 1, :3, :3], src_proj[:, 0, :3, :4])
+    ref_proj_new = ref_proj[:, 0].clone()
+    ref_proj_new[:, :3, :4] = torch.matmul(ref_proj[:, 1, :3, :3], ref_proj[:, 0, :3, :4])
+
+    warped_imgs = homo_warping(src_imgs[0], src_proj_new, ref_proj_new, depth_values)
+
+    ref_img_np = ref_img.permute([0, 2, 3, 1])[0].detach().cpu().numpy()[:, :, ::-1] * 255
+    cv2.imwrite('../tmp/ref.png', ref_img_np)
+    cv2.imwrite('../tmp/src.png', src_imgs[0].permute([0, 2, 3, 1])[0].detach().cpu().numpy()[:, :, ::-1] * 255)
+
+    for i in range(warped_imgs.shape[2]):
+        warped_img = warped_imgs[:, :, i, :, :].permute([0, 2, 3, 1]).contiguous()
+        img_np = warped_img[0].detach().cpu().numpy()
+        img_np = img_np[:, :, ::-1] * 255
+
+        alpha = 0.5
+        beta = 1 - alpha
+        gamma = 0
+        img_add = cv2.addWeighted(ref_img_np, alpha, img_np, beta, gamma)
+        cv2.imwrite('../tmp/tmp{}.png'.format(i), np.hstack([ref_img_np, img_np, img_add])) #* ratio + img_np*(1-ratio)]))

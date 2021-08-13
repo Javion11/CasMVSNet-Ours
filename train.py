@@ -55,7 +55,6 @@ parser.add_argument('--grad_method', type=str, default="detach", choices=["detac
 parser.add_argument('--opt-level', type=str, default="O0")
 parser.add_argument('--keep-batchnorm-fp32', type=str, default=None)
 parser.add_argument('--loss-scale', type=str, default=None)
-parser.add_argument('--arch_mode', default='fpn', help='select the architecture of feature extract net')
 
 
 num_gpus = int(os.environ["WORLD_SIZE"]) if "WORLD_SIZE" in os.environ else 1
@@ -249,7 +248,7 @@ def profile():
         torch.cuda.synchronize()
         torch.cuda.synchronize()
         start_time = time.perf_counter()
-        test_sample(next(iter_dataloader), detailed_summary=True)
+        test_sampler(next(iter_dataloader), detailed_summary=True)
         torch.cuda.synchronize()
         end_time = time.perf_counter()
         return end_time - start_time
@@ -274,7 +273,6 @@ def profile():
 if __name__ == '__main__':
     # parse arguments and check
     args = parser.parse_args()
-
     # add some parser arguements
     # args.trainpath = "MVS_TRAINING"
     # args.trainlist = "./lists/dtu/train.txt"
@@ -282,7 +280,7 @@ if __name__ == '__main__':
     # args.testlist = "./lists/dtu/test.txt"
     # args.batch_size = * # Set the appropriate value according to the GPU memory
     # args.resume = * # If set to True, you need to select the path of checkpoints
-    
+
     if args.resume:
         assert args.mode == "train"
         assert args.loadckpt is None
@@ -316,8 +314,7 @@ if __name__ == '__main__':
                           depth_interals_ratio=[float(d_i) for d_i in args.depth_inter_r.split(",") if d_i],
                           share_cr=args.share_cr,
                           cr_base_chs=[int(ch) for ch in args.cr_base_chs.split(",") if ch],
-                          grad_method=args.grad_method,
-                          arch_mode= args.arch_mode)
+                          grad_method=args.grad_method)
     model.to(device)
     model_loss = cas_mvsnet_loss
     optimizer = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=args.lr, betas=(0.9, 0.999), weight_decay=args.wd)

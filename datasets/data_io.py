@@ -83,7 +83,7 @@ class RandomCrop(object):
         x2, y2 = random.randint(w - CropSize_w, w), random.randint(h - CropSize_h, h)
 
         normal_crop = normal[y1:y2, x1:x2]
-        # hanjiawei: if downsample interpolation parameter advise to be INTER_AREA
+        # NOTE: if downsample interpolation parameter advise to be INTER_AREA
         # normal_resize = cv2.resize(normal_crop, (w, h), interpolation=cv2.INTER_NEAREST)
         normal_resize = cv2.resize(normal_crop, (w, h), interpolation=cv2.INTER_AREA)
 

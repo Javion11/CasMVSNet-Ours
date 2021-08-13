@@ -151,7 +151,7 @@ class MVSDataset(Dataset):
             proj_mat_filename = os.path.join(self.datapath, 'dtu', '{}/cams/{:0>8}_cam.txt'.format(scan, vid))
 
             img = self.read_img(img_filename)
-            img_clean = self.read_img(img_clean_filename)
+            img_clean = self.read_img(img_filename)
             intrinsics, extrinsics, depth_min, depth_interval = self.read_cam_file(proj_mat_filename, interval_scale=
                                                                                    self.interval_scale[scene_name])
             intrinsics_copy = intrinsics.copy() 
